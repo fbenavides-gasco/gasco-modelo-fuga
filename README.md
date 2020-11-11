@@ -1,0 +1,1 @@
+# gasco-modelo-fuga
