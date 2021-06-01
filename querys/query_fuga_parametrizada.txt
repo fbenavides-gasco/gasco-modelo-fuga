@@ -1,0 +1,50 @@
+SELECT @INI_DATE AS FECHA_INI_AM,
+       @TER_DATE AS FECHA_TER_AM, 
+       A.*,
+       CASE  WHEN A.n_canales = 2 THEN 'ON-OFF'
+             WHEN A.n_canales = 1 AND tipo_pedido = 'ONLINE' THEN 'ONLINE'
+             WHEN A.n_canales = 1 AND tipo_pedido = 'OFFLINE' THEN 'OFFLINE'
+      END AS TIPO_CLIENTE,
+      B.predict_estufa,
+      B.predict_parrilla,
+      B.predict_cocina,
+      B.predict_calefont
+FROM(
+      SELECT CAST(TELEFONO AS INT64) AS TELEFONO,
+             SUM(IND_TA) AS PEDIDOS_TA,
+             SUM(KILOS_TA) AS KILOS_TA,
+             COUNT(DISTINCT createdAT) AS TOTAL_PEDIDOS,
+             SUM(total_kilos_pedido) AS TOTAL_KILOS,
+             COUNT(DISTINCT MONTH) AS MESES_COMPRA,
+             MIN(EXTRACT(DATE FROM createdAt)) AS FECHA_PRIMER_PEDIDO,
+             MAX(EXTRACT(DATE FROM createdAt)) AS FECHA_ULTIMO_PEDIDO,
+             AVG(dias_compra) AS frec_compra_promedio, 
+             stddev(dias_compra) AS desv_frec_compra,
+             COUNT(DISTINCT TIPO_PEDIDO_BIEN) AS n_canales, 
+             MAX(TIPO_PEDIDO_BIEN) AS tipo_pedido 
+      FROM(
+            SELECT *, 
+                  DATE_DIFF(EXTRACT(DATE FROM createdat),LAG(EXTRACT(DATE FROM createdat)) OVER(PARTITION BY Telefono ORDER BY EXTRACT(DATE FROM createdat)), DAY) AS dias_compra 
+            FROM(
+                  SELECT *,
+                        EXTRACT(YEAR FROM createdAt) AS YEAR,
+                        EXTRACT(MONTH FROM createdAt) as MONTH,
+                        CASE WHEN mes in (5,6,7,8,9) THEN 1 ELSE 0 END AS IND_TA,
+                        CASE WHEN mes in (5,6,7,8,9) THEN total_kilos_pedido ELSE 0 END AS KILOS_TA,
+                        CASE WHEN tipo_pedido_bien = 'OFFLINE' THEN customerNoIfOffline
+                              WHEN tipo_pedido_bien = 'ONLINE' THEN mobile
+                              ELSE mobile END AS Telefono,
+                        CASE WHEN status = 'COMPLETED' THEN 'COMPLETADO' ELSE 'NO COMPLETADO' END AS ESTADO_PEDIDO, 
+                  FROM `gasco-analytics.gasco.pedidos_gasconnect_todos_javier`
+                  WHERE CAST(createdAt as DATE) BETWEEN @INI_DATE AND @TER_DATE --SELECCIONA LOS PEDIDOS DE UN AÑO MOVIL
+                  AND isAnulled IS NULL     --PEDIDO NO ANULADO
+                  --AND mobile IS NOT NULL    --TELEFONO NO NULO
+                  AND TIPO_PEDIDO_BIEN IN ('OFFLINE', 'ONLINE')
+            )
+            WHERE ESTADO_PEDIDO = 'COMPLETADO'
+      )
+      GROUP BY TELEFONO
+) AS A   
+
+LEFT JOIN `gasco-analytics.gasco_modelos.20210218_prediccion_modelo_uso_gas` AS B  
+ON(A.TELEFONO = B.telefono)
